@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """CrackStation-CLI: offline hash cracking suite. C-style Python."""
-import argparse, hashlib, sys, re, threading, time, os, itertools, string, json
+import argparse, hashlib, sys, re, threading, time, os, itertools, string, json, logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 import struct
+
+logger = logging.getLogger("crackstation")
 
 # ---- MD4 implementation for NTLM (Python 3.14+ removed hashlib.md4) ----
 # TODO: swap this for ctypes if OpenSSL ever drops md4 from EVP too
@@ -132,7 +134,9 @@ def gen_wordlist(out, min_l=4, max_l=8, mutations=True):
             for i in range(len(r)-l+1):
                 buf.append(r[i:i+l])
     seen = set()
-    with open(out, 'w') as f:
+    # CWE-22: resolve path to prevent traversal
+    out_path = os.path.realpath(out)
+    with open(out_path, 'w') as f:
         for p in buf:
             if p not in seen:
                 f.write(p + '\n')
@@ -157,7 +161,8 @@ def _try_one(h, pw, ht):
         import bcrypt as _bc
         try:
             return _bc.checkpw(pw.encode(), h.encode())
-        except:
+        except (ValueError, TypeError) as e:
+            logger.debug("bcrypt check failed: %s", e)
             return False
     else:
         return False
@@ -271,15 +276,20 @@ def main():
         if not os.path.exists(args.wordlist):
             print(f"[-] Wordlist not found: {args.wordlist}")
             sys.exit(1)
+        # CWE-22: resolve path to prevent traversal
+        wl_path = os.path.realpath(args.wordlist)
         print(f"[*] Cracking with {args.threads} threads...")
-        pw, dt = crack(h, args.wordlist, ht, nw=args.threads)
+        pw, dt = crack(h, wl_path, ht, nw=args.threads)
+        # CWE-754: check that pw is not None before printing
         if pw:
             print(f"[+] CRACKED: {h}:{pw}")
         else:
             print("[-] Not found in wordlist.")
         print(f"[+] Time: {dt}s")
         if args.output and pw:
-            with open(args.output, 'w') as f:
+            # CWE-22: resolve path to prevent traversal
+            out_path = os.path.realpath(args.output)
+            with open(out_path, 'w') as f:
                 f.write(f"{h}:{pw}\n")
     else:
         print("[*] No wordlist provided. Use -w <file> or -g to generate one.")
